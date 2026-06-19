@@ -16,11 +16,12 @@ app.get('/password-score', (req, res) => {
   }
   const score = passScore(password)
 
-  res.status(200).html(`
+  res.status(200).send(`
     <html><body>
       <h1>Password Score</h1>
       <p>Password: ${password}</p>
       <p>Score: ${score}</p>
+      <p>Strength: ${scoreToMessage(score)}</p>
     </body></html>
 `)
 })
@@ -32,7 +33,25 @@ const passScore = (pass) => {
   if (/[A-Z]/.test(pass)) score += 1
   if (/[a-z]/.test(pass)) score += 1
   if (/[0-9]/.test(pass)) score += 1
-  if (/[^A-Za-z0-9]/.test(pass)) score += 1
+  if (/[^A-Za-z0-9]/.test(pass)) score += 1 // Special characters
+  return score
+}
+
+const scoreToMessage = (score) => {
+  switch (score) {
+    case 0:
+    case 1:
+      return 'Very Weak'
+    case 2:
+      return 'Weak'
+    case 3:
+      return 'Moderate'
+    case 4:
+      return 'Strong'
+    case 5:
+      return 'Very Strong'
+  }
+  return 'error'
 }
 
 const server = app.listen(port, () => {
