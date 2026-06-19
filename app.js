@@ -1,13 +1,47 @@
-const express = require("express");
-const app = express();
-const port = process.env.PORT || 3001;
+const express = require('express')
+const app = express()
+const port = process.env.PORT || 3001
 
-app.get("/", (req, res) => res.type('html').send(html));
+app.get('/', (req, res) => res.type('html').send(html))
 
-const server = app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+app.get('/status', (req, res) => res.json({ status: 'ok' }))
+app.get('/dump', (req, res) => res.json({ headers: req.rawHeaders }))
 
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 120 * 1000;
+app.get('/password-score', (req, res) => {
+  const password = req.query.password
+  if (!password) {
+    return res
+      .status(400)
+      .json({ error: 'Password query parameter is required' })
+  }
+  const score = passScore(password)
+
+  res.status(200).html(`
+    <html><body>
+      <h1>Password Score</h1>
+      <p>Password: ${password}</p>
+      <p>Score: ${score}</p>
+    </body></html>
+`)
+})
+
+const passScore = (pass) => {
+  let score = 0
+
+  if (pass.length >= 8) score += 1
+  if (/[A-Z]/.test(pass)) score += 1
+  if (/[a-z]/.test(pass)) score += 1
+  if (/[0-9]/.test(pass)) score += 1
+  if (/[^A-Za-z0-9]/.test(pass)) score += 1
+}
+
+const server = app.listen(port, () => {
+  console.log(`Example app listening on port ${port}!`)
+  console.log(`http://localhost:${port}/`)
+})
+
+server.keepAliveTimeout = 120 * 1000
+server.headersTimeout = 120 * 1000
 
 const html = `
 <!DOCTYPE html>
