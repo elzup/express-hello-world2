@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC Video Call (with filter)</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 16px;
+      }
+      .videos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .pane {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .pane h2 {
+        margin: 0;
+        font-size: 14px;
+        color: #555;
+      }
+      video,
+      canvas.preview {
+        width: 320px;
+        height: 240px;
+        background: #000;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 12px 0;
+      }
+      button,
+      select {
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background: #eee;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .status {
+        color: #888;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WebRTC Video Call</h1>
+    <p class="status">
+      2つのタブ（または2台の端末）でこのページを開き、両方で「Start」してから
+      片方で「Call」を押してください。送信前にフィルターがかかります。
+    </p>
+
+    <div class="controls">
+      <button id="start">Start camera</button>
+      <button id="call" disabled>Call</button>
+      <button id="hangup" disabled>Hang up</button>
+      <label>
+        Filter:
+        <select id="filter">
+          <option value="none">none</option>
+          <option value="grayscale(1)">grayscale</option>
+          <option value="sepia(1)">sepia</option>
+          <option value="invert(1)">invert</option>
+          <option value="blur(4px)">blur</option>
+          <option value="saturate(3)">saturate</option>
+          <option value="hue-rotate(120deg)">hue-rotate</option>
+          <option value="contrast(2) brightness(1.2)">high-contrast</option>
+          <option value="pixelate">pixelate</option>
+        </select>
+      </label>
+      <span class="status" id="state">idle</span>
+    </div>
+
+    <div class="videos">
+      <div class="pane">
+        <h2>Local (filtered, sent to peer)</h2>
+        <canvas id="preview" class="preview" width="320" height="240"></canvas>
+      </div>
+      <div class="pane">
+        <h2>Remote</h2>
+        <video id="remote" autoplay playsinline></video>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
+    <script>
+      const ICE = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+      const myId = self.crypto.randomUUID().slice(0, 8)
+
+      const host = location.origin.replace(/^http/, 'ws')
+      const ws = new WebSocket(host + '/ws')
+
+      const startBtn = document.getElementById('start')
+      const callBtn = document.getElementById('call')
+      const hangupBtn = document.getElementById('hangup')
+      const filterSel = document.getElementById('filter')
+      const stateEl = document.getElementById('state')
+      const preview = document.getElementById('preview')
+      const remoteVideo = document.getElementById('remote')
+
+      const setState = (s) => (stateEl.textContent = s)
+
+      let rawStream = null // 生のカメラ
+      let outStream = null // フィルター後の送信ストリーム
+      let peer = null // simple-peer インスタンス
+      let peerId = null // 通話相手
+      let rafId = null
+
+      // 隠し video に生映像を流し、canvas にフィルターをかけて描き続ける
+      const srcVideo = document.createElement('video')
+      srcVideo.muted = true
+      srcVideo.playsInline = true
+      const ctx = preview.getContext('2d')
+
+      function renderLoop() {
+        const value = filterSel.value
+        if (value === 'pixelate') {
+          // 縮小→拡大でモザイク化
+          const w = 32
+          const h = Math.round((preview.height / preview.width) * w)
+          ctx.filter = 'none'
+          ctx.imageSmoothingEnabled = false
+          ctx.drawImage(srcVideo, 0, 0, w, h)
+          ctx.drawImage(
+            preview,
+            0,
+            0,
+            w,
+            h,
+            0,
+            0,
+            preview.width,
+            preview.height,
+          )
+        } else {
+          ctx.imageSmoothingEnabled = true
+          ctx.filter = value
+          ctx.drawImage(srcVideo, 0, 0, preview.width, preview.height)
+        }
+        rafId = requestAnimationFrame(renderLoop)
+      }
+
+      async function startCamera() {
+        rawStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        })
+        srcVideo.srcObject = rawStream
+        await srcVideo.play()
+        renderLoop()
+
+        // canvas の映像 + 生の音声 = 送信ストリーム
+        outStream = preview.captureStream(30)
+        const audio = rawStream.getAudioTracks()[0]
+        if (audio) outStream.addTrack(audio)
+
+        startBtn.disabled = true
+        callBtn.disabled = false
+        setState('camera ready')
+      }
+
+      // initiator=true で offer 側、false で answer 側。
+      // offer/answer/candidate のやり取りは simple-peer が 'signal' に集約してくれる
+      function createPeer(initiator) {
+        peer = new SimplePeer({ initiator, stream: outStream, config: ICE })
+        peer.on('signal', (data) => send({ signal: data }))
+        peer.on('stream', (stream) => (remoteVideo.srcObject = stream))
+        peer.on('connect', () => setState('connected'))
+        peer.on('close', () => hangup())
+        peer.on('error', (err) => console.error('peer error', err))
+        hangupBtn.disabled = false
+        return peer
+      }
+
+      function makeCall() {
+        if (!peer) createPeer(true)
+        callBtn.disabled = true
+        setState('calling...')
+      }
+
+      function hangup() {
+        if (peer) {
+          peer.destroy()
+          peer = null
+        }
+        peerId = null
+        remoteVideo.srcObject = null
+        callBtn.disabled = false
+        hangupBtn.disabled = true
+        setState('hung up')
+      }
+
+      // --- signaling over the shared /ws broadcast ---
+      function send(payload) {
+        ws.send(
+          JSON.stringify({ type: 'rtc', from: myId, to: peerId, ...payload }),
+        )
+      }
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data)
+        if (msg.type !== 'rtc') return
+        if (msg.from === myId) return // 自分の発言は無視
+        if (msg.to && msg.to !== myId) return // 自分宛て以外は無視
+
+        // 最初に来た相手を通話相手として固定
+        if (!peerId) peerId = msg.from
+        if (msg.from !== peerId) return
+
+        // まだ peer が無ければ answer 側として作る
+        if (!peer) createPeer(false)
+        peer.signal(msg.signal)
+        callBtn.disabled = true
+      }
+
+      ws.onerror = (e) => console.error('WebSocket error', e)
+
+      startBtn.onclick = () =>
+        startCamera().catch((e) => setState('error: ' + e.message))
+      callBtn.onclick = () => makeCall()
+      hangupBtn.onclick = () => hangup()
+    </script>
+  </body>
+</html>
