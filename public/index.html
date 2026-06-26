@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chat App</title>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@3.6.0/cdn.min.js"></script>
+
     <style>
       .chat {
         display: flex;
@@ -16,6 +18,12 @@
         list-style: none;
         padding: 0;
         margin: 0;
+        li {
+          display: flex;
+          grid-auto-flow: column;
+          align-content: start;
+          flex-direction: row;
+        }
       }
       img {
         width: 20px;
@@ -146,6 +154,18 @@
             }
             li.appendChild(img)
             li.appendChild(span)
+            const timeSpan = document.createElement('span')
+            const now = new Date()
+            // Temporal ex 10分前
+            // const agoText = dateFns.formatDistanceToNow(now, {
+            //   addSuffix: true,
+            //   // locale: 'ja',
+            // })
+            // (${agoText})
+            timeSpan.textContent = ` [ ${now.getHours()}:${now.getMinutes()}:${now.getSeconds()} ] `
+            timeSpan.style.fontSize = '0.8em'
+
+            li.appendChild(timeSpan)
             messageList.appendChild(li)
           }
         }
